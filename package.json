@@ -1,0 +1,38 @@
+{
+  "name": "openclaw-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server exposing OpenClaw Gateway tools to Claude Code and other MCP clients",
+  "main": "dist/index.js",
+  "type": "module",
+  "bin": {
+    "openclaw-mcp-server": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "openclaw",
+    "claude",
+    "ai",
+    "tools"
+  ],
+  "author": "Helms AI",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/ws": "^8.5.10",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

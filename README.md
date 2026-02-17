@@ -75,110 +75,78 @@ Endpoints:
 
 ## Deployment
 
-### Option 1: Docker (recommended)
+### Option 1: Docker — HTTP transport (recommended for persistent use)
 
-Create a `Dockerfile`:
-
-```dockerfile
-FROM node:18-alpine
-WORKDIR /app
-COPY package.json pnpm-lock.yaml ./
-RUN corepack enable && pnpm install --frozen-lockfile --prod
-COPY dist/ dist/
-EXPOSE 8170
-ENV MCP_TRANSPORT=http
-ENV MCP_PORT=8170
-CMD ["node", "dist/index.js"]
-```
-
-Build and run:
-
-```bash
-# Build the TypeScript first
-pnpm run build
-
-# Build and run the container
-docker build -t openclaw-mcp-server .
-docker run -d \
-  --name openclaw-mcp-http \
-  -p 8170:8170 \
-  -e OPENCLAW_GATEWAY_URL=http://host.docker.internal:18789 \
-  -e OPENCLAW_GATEWAY_TOKEN=your-token \
-  openclaw-mcp-server
-```
-
-Or add to an existing `docker-compose.yml`:
-
-```yaml
-services:
-  openclaw-mcp:
-    build: .
-    ports:
-      - "8170:8170"
-    environment:
-      MCP_TRANSPORT: http
-      MCP_PORT: 8170
-      OPENCLAW_GATEWAY_URL: http://host.docker.internal:18789
-      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN}
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8170/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
+```powershell
+# Configure .env.local (set OPENCLAW_GATEWAY_TOKEN)
+# Then build and start:
+cd F:\Production\openclaw-mcp-server
+docker-compose -f docker-compose.prod.yml up -d --build
 ```
 
 Verify:
 
-```bash
-curl http://localhost:8170/health
+```powershell
+Invoke-WebRequest http://localhost:8170/health
 # {"status":"ok"}
 ```
 
-### Option 2: Direct (host process)
+The `Dockerfile` and `docker-compose.prod.yml` are included in this repo. The compose file loads credentials from `.env.local` and connects to the gateway via `host.docker.internal:18789`.
 
-```bash
-MCP_TRANSPORT=http \
-OPENCLAW_GATEWAY_URL=http://127.0.0.1:18789 \
-OPENCLAW_GATEWAY_TOKEN=your-token \
-node dist/index.js
-```
+### Option 2: stdio — MCP client managed (simplest, no container)
 
-### Option 3: stdio (MCP client managed)
-
-No separate deployment needed — the MCP client launches the server as a subprocess. See Client Setup below.
+No deployment needed — the MCP client launches the server as a subprocess on demand. See [Client Setup](#client-setup) below.
 
 ## Client Setup
 
 The server works with any MCP-compatible client. For **HTTP mode**, clients connect to `http://<host>:8170/mcp`. For **stdio mode**, clients launch the server as a subprocess.
 
-### Connecting to HTTP mode
+### Option A: HTTP transport (Docker container)
 
-For any MCP client that supports StreamableHTTP remote servers, point it at:
+Connect any MCP client that supports StreamableHTTP to the running container:
 
 ```
 http://localhost:8170/mcp
 ```
 
-(Or replace `localhost` with your Docker host / server IP for remote access.)
+#### Claude Code (HTTP)
 
-### Connecting via stdio
+Add to your project-level `.mcp.json` or user-level `~/.claude.json`:
 
-#### Claude Desktop
+```json
+{
+  "mcpServers": {
+    "openclaw": {
+      "type": "http",
+      "url": "http://localhost:8170/mcp"
+    }
+  }
+}
+```
 
-Add to your Claude Desktop configuration file:
+Start the container first:
 
-**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-**Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
-**Linux**: `~/.config/Claude/claude_desktop_config.json`
+```powershell
+cd F:\Production\openclaw-mcp-server
+docker-compose -f docker-compose.prod.yml up -d
+```
+
+### Option B: stdio transport (no Docker)
+
+The MCP client launches the server as a subprocess — no container needed. The server process is created on demand and communicates over stdin/stdout.
+
+#### Claude Code (stdio)
+
+Add to your project-level `.mcp.json` or user-level `~/.claude.json`:
 
 ```json
 {
   "mcpServers": {
     "openclaw": {
       "command": "node",
-      "args": ["/absolute/path/to/openclaw-mcp-server/dist/index.js"],
+      "args": ["F:\\Production\\openclaw-mcp-server\\dist\\index.js"],
       "env": {
+        "OPENCLAW_GATEWAY_URL": "http://127.0.0.1:18789",
         "OPENCLAW_GATEWAY_TOKEN": "your-token-here"
       }
     }
@@ -186,21 +154,25 @@ Add to your Claude Desktop configuration file:
 }
 ```
 
-**Note**: Restart Claude Desktop after editing the configuration file.
-
-#### Claude Code (CLI)
-
-Add using the Claude Code CLI:
+Or via the CLI:
 
 ```bash
-# Using the CLI
-claude mcp add openclaw -- node /path/to/openclaw-mcp-server/dist/index.js
-
-# Or with environment variables
-claude mcp add openclaw -e OPENCLAW_GATEWAY_TOKEN=your-token -- node /path/to/openclaw-mcp-server/dist/index.js
+claude mcp add openclaw \
+  -e OPENCLAW_GATEWAY_URL=http://127.0.0.1:18789 \
+  -e OPENCLAW_GATEWAY_TOKEN=your-token-here \
+  -- node "F:\Production\openclaw-mcp-server\dist\index.js"
 ```
 
-Or manually edit `~/.claude/settings.json`:
+> **Note**: Use `http://127.0.0.1:18789` (not `host.docker.internal`) because Claude Code runs on the host, not inside Docker.
+
+### Other clients (stdio)
+
+#### Claude Desktop
+
+Add to your Claude Desktop configuration file:
+
+**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+**Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 
 ```json
 {
@@ -209,6 +181,7 @@ Or manually edit `~/.claude/settings.json`:
       "command": "node",
       "args": ["/absolute/path/to/openclaw-mcp-server/dist/index.js"],
       "env": {
+        "OPENCLAW_GATEWAY_URL": "http://127.0.0.1:18789",
         "OPENCLAW_GATEWAY_TOKEN": "your-token-here"
       }
     }

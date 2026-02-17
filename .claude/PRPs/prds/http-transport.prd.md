@@ -121,7 +121,7 @@ External consumers or end users — this is internal infrastructure tooling.
 
 | # | Phase | Description | Status | Parallel | Depends | PRP Plan |
 |---|-------|-------------|--------|----------|---------|----------|
-| 1 | HTTP transport | Add transport selection and StreamableHTTP support | pending | - | - | - |
+| 1 | HTTP transport | Add transport selection and StreamableHTTP support | in-progress | - | - | `.claude/PRPs/plans/http-transport.plan.md` |
 | 2 | Docker deployment | Dockerfile, docker-compose.yml, env config | pending | - | 1 | - |
 | 3 | Documentation | Update README, CLAUDE.md with HTTP usage | pending | - | 1 | - |
 

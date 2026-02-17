@@ -2,15 +2,21 @@
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
+import * as http from "node:http";
 
 // OpenClaw Gateway configuration
 const GATEWAY_URL = process.env.OPENCLAW_GATEWAY_URL || "http://127.0.0.1:18789";
 const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN || "";
+
+// Transport configuration
+const MCP_TRANSPORT = process.env.MCP_TRANSPORT || "stdio";
+const MCP_PORT = parseInt(process.env.MCP_PORT || "8170", 10);
 
 // Tool definitions for OpenClaw Gateway
 const OPENCLAW_TOOLS: Tool[] = [
@@ -373,8 +379,8 @@ async function invokeGatewayTool(tool: string, args: Record<string, unknown>): P
   return result.result;
 }
 
-// Create and run the MCP server
-async function main() {
+// Create a configured MCP Server instance
+function createServer(): Server {
   const server = new Server(
     {
       name: "openclaw-mcp-server",
@@ -422,11 +428,85 @@ async function main() {
     }
   });
 
-  // Start the server
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  
-  console.error("OpenClaw MCP Server running on stdio");
+  return server;
+}
+
+// Start HTTP transport with StreamableHTTP
+async function startHttpTransport() {
+  const httpServer = http.createServer(async (req, res) => {
+    const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
+
+    // Health check
+    if (url.pathname === "/health") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status: "ok" }));
+      return;
+    }
+
+    // MCP endpoint
+    if (url.pathname === "/mcp") {
+      if (req.method === "POST") {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(chunk as Buffer);
+        let body: unknown;
+        try {
+          body = JSON.parse(Buffer.concat(chunks).toString("utf-8"));
+        } catch {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({
+            jsonrpc: "2.0",
+            error: { code: -32700, message: "Parse error" },
+            id: null,
+          }));
+          return;
+        }
+
+        // Stateless: fresh transport + server per request
+        const transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: undefined,
+        });
+        const server = createServer();
+        await server.connect(transport);
+        await transport.handleRequest(req, res, body);
+        res.on("close", () => {
+          transport.close();
+          server.close();
+        });
+        return;
+      }
+
+      // GET/DELETE not supported in stateless mode
+      res.writeHead(405, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        jsonrpc: "2.0",
+        error: { code: -32000, message: "Method not allowed in stateless mode" },
+        id: null,
+      }));
+      return;
+    }
+
+    res.writeHead(404).end();
+  });
+
+  httpServer.listen(MCP_PORT, () => {
+    console.error(`OpenClaw MCP Server running on http://0.0.0.0:${MCP_PORT}/mcp`);
+  });
+
+  process.on("SIGINT", () => {
+    httpServer.close(() => process.exit(0));
+  });
+}
+
+// Main entry point
+async function main() {
+  if (MCP_TRANSPORT === "http") {
+    await startHttpTransport();
+  } else {
+    const server = createServer();
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+    console.error("OpenClaw MCP Server running on stdio");
+  }
 }
 
 main().catch((error) => {

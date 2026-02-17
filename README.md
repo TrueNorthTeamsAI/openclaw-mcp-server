@@ -18,7 +18,7 @@ Gives Claude Code (and any MCP client) access to:
 ## Prerequisites
 
 - Node.js 18+
-- OpenClaw Gateway running locally (default: `http://127.0.0.1:18789`)
+- OpenClaw Gateway running (default: `http://127.0.0.1:18789`)
 - Gateway auth token (if configured)
 
 ## Installation
@@ -26,25 +26,143 @@ Gives Claude Code (and any MCP client) access to:
 ```bash
 # Clone and install
 cd /path/to/openclaw-mcp-server
-npm install
-npm run build
-
-# Or install globally
-npm install -g .
+pnpm install
+pnpm run build
 ```
 
 ## Configuration
 
 ### Environment Variables
 
+Copy `.env.example` to `.env` and configure:
+
+```bash
+cp .env.example .env
+```
+
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `OPENCLAW_GATEWAY_URL` | Gateway HTTP URL | `http://127.0.0.1:18789` |
-| `OPENCLAW_GATEWAY_TOKEN` | Auth token (if required) | _(none)_ |
+| `OPENCLAW_GATEWAY_URL` | Gateway HTTP endpoint | `http://127.0.0.1:18789` |
+| `OPENCLAW_GATEWAY_TOKEN` | Bearer token for Gateway auth | _(none)_ |
+| `MCP_TRANSPORT` | Transport mode: `stdio` or `http` | `stdio` |
+| `MCP_PORT` | HTTP listen port (only when `MCP_TRANSPORT=http`) | `8170` |
 
-### Client Setup
+## Transport Modes
 
-The OpenClaw MCP server works with any MCP-compatible client. Below are configuration instructions for popular clients.
+The server supports two transport modes:
+
+### stdio (default)
+
+The MCP client launches the server as a subprocess and communicates over stdin/stdout. Best for single-client, local use (e.g., Claude Code on your desktop).
+
+```
+MCP Client  ──stdin/stdout──>  openclaw-mcp-server  ──HTTP──>  OpenClaw Gateway
+(subprocess)                                                    :18789
+```
+
+### HTTP (StreamableHTTP)
+
+The server runs as a standalone HTTP service. Any number of MCP clients can connect over the network. Best for Docker deployments, shared instances, or remote access.
+
+```
+MCP Client(s)  ──HTTP POST──>  openclaw-mcp-server  ──HTTP──>  OpenClaw Gateway
+(anywhere)       /mcp          :8170                            :18789
+```
+
+Endpoints:
+- `POST /mcp` — MCP protocol (StreamableHTTP, stateless)
+- `GET /health` — Health check, returns `{"status":"ok"}`
+
+## Deployment
+
+### Option 1: Docker (recommended)
+
+Create a `Dockerfile`:
+
+```dockerfile
+FROM node:18-alpine
+WORKDIR /app
+COPY package.json pnpm-lock.yaml ./
+RUN corepack enable && pnpm install --frozen-lockfile --prod
+COPY dist/ dist/
+EXPOSE 8170
+ENV MCP_TRANSPORT=http
+ENV MCP_PORT=8170
+CMD ["node", "dist/index.js"]
+```
+
+Build and run:
+
+```bash
+# Build the TypeScript first
+pnpm run build
+
+# Build and run the container
+docker build -t openclaw-mcp-server .
+docker run -d \
+  --name openclaw-mcp-http \
+  -p 8170:8170 \
+  -e OPENCLAW_GATEWAY_URL=http://host.docker.internal:18789 \
+  -e OPENCLAW_GATEWAY_TOKEN=your-token \
+  openclaw-mcp-server
+```
+
+Or add to an existing `docker-compose.yml`:
+
+```yaml
+services:
+  openclaw-mcp:
+    build: .
+    ports:
+      - "8170:8170"
+    environment:
+      MCP_TRANSPORT: http
+      MCP_PORT: 8170
+      OPENCLAW_GATEWAY_URL: http://host.docker.internal:18789
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8170/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+```
+
+Verify:
+
+```bash
+curl http://localhost:8170/health
+# {"status":"ok"}
+```
+
+### Option 2: Direct (host process)
+
+```bash
+MCP_TRANSPORT=http \
+OPENCLAW_GATEWAY_URL=http://127.0.0.1:18789 \
+OPENCLAW_GATEWAY_TOKEN=your-token \
+node dist/index.js
+```
+
+### Option 3: stdio (MCP client managed)
+
+No separate deployment needed — the MCP client launches the server as a subprocess. See Client Setup below.
+
+## Client Setup
+
+The server works with any MCP-compatible client. For **HTTP mode**, clients connect to `http://<host>:8170/mcp`. For **stdio mode**, clients launch the server as a subprocess.
+
+### Connecting to HTTP mode
+
+For any MCP client that supports StreamableHTTP remote servers, point it at:
+
+```
+http://localhost:8170/mcp
+```
+
+(Or replace `localhost` with your Docker host / server IP for remote access.)
+
+### Connecting via stdio
 
 #### Claude Desktop
 
@@ -1017,30 +1135,43 @@ Search OpenClaw's memory files using semantic search.
 
 ```bash
 # Install dependencies
-npm install
+pnpm install
 
-# Run in development mode
-npm run dev
+# Run in development mode (stdio)
+pnpm run dev
+
+# Run in development mode (HTTP)
+MCP_TRANSPORT=http pnpm run dev
 
 # Build for production
-npm run build
+pnpm run build
 
 # Run built version
-npm start
+pnpm run start
 ```
 
 ## Testing
 
-Test the server with MCP inspector:
+Test stdio mode with MCP inspector:
 
 ```bash
 npx @modelcontextprotocol/inspector node dist/index.js
 ```
 
-Or test directly:
+Test HTTP mode:
 
 ```bash
-echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | node dist/index.js
+# Start the server
+MCP_TRANSPORT=http node dist/index.js
+
+# Health check
+curl http://localhost:8170/health
+
+# MCP initialize
+curl -X POST http://localhost:8170/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}},"id":1}'
 ```
 
 ## License

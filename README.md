@@ -17,9 +17,10 @@ Gives Claude Code (and any MCP client) access to:
 
 ## Prerequisites
 
-- Node.js 18+
+- Node.js `>=24.16.0 <25` or `>=26.1.0` (required by the bundled OpenClaw client)
 - OpenClaw Gateway running (default: `http://127.0.0.1:18789`)
 - Gateway auth token (if configured)
+- For automation/cron control: a paired OpenClaw operator device identity with the required operator scopes; persist the OpenClaw client state directory across restarts
 
 ## Installation
 
@@ -56,8 +57,8 @@ The server supports two transport modes:
 The MCP client launches the server as a subprocess and communicates over stdin/stdout. Best for single-client, local use (e.g., Claude Code on your desktop).
 
 ```
-MCP Client  ──stdin/stdout──>  openclaw-mcp-server  ──HTTP──>  OpenClaw Gateway
-(subprocess)                                                    :18789
+MCP Client  ──stdin/stdout──>  openclaw-mcp-server  ──HTTP tools/invoke──>  OpenClaw Gateway
+(subprocess)                                   └─native WS RPC (automation)─> :18789
 ```
 
 ### HTTP (StreamableHTTP)
@@ -65,8 +66,8 @@ MCP Client  ──stdin/stdout──>  openclaw-mcp-server  ──HTTP──>  O
 The server runs as a standalone HTTP service. Any number of MCP clients can connect over the network. Best for Docker deployments, shared instances, or remote access.
 
 ```
-MCP Client(s)  ──HTTP POST──>  openclaw-mcp-server  ──HTTP──>  OpenClaw Gateway
-(anywhere)       /mcp          :8170                            :18789
+MCP Client(s)  ──HTTP POST──>  openclaw-mcp-server  ──HTTP tools/invoke──>  OpenClaw Gateway
+(anywhere)       /mcp          :8170            └─native WS RPC (automation)─> :18789
 ```
 
 Endpoints:

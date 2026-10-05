@@ -9,10 +9,80 @@ import {
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import * as http from "node:http";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
 // OpenClaw Gateway configuration
 const GATEWAY_URL = process.env.OPENCLAW_GATEWAY_URL || "http://127.0.0.1:18789";
 const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN || "";
+const execFileAsync = promisify(execFile);
+const OPENCLAW_ENTRY = new URL("../node_modules/openclaw/openclaw.mjs", import.meta.url).pathname;
+
+async function invokeAutomationRpc(mcpToolName: string, args: Record<string, unknown>): Promise<unknown> {
+  let method: string;
+  let params: Record<string, unknown>;
+
+  switch (mcpToolName) {
+    case "openclaw_cron_list":
+      method = "cron.list";
+      params = { includeDisabled: Boolean(args.includeDisabled) };
+      break;
+    case "openclaw_cron_add": {
+      const job = args.job;
+      if (!job || typeof job !== "object" || Array.isArray(job)) {
+        throw new Error("openclaw_cron_add requires a job object");
+      }
+      method = "cron.add";
+      params = { ...(job as Record<string, unknown>) };
+      break;
+    }
+    case "openclaw_cron_remove":
+      if (typeof args.jobId !== "string" || !args.jobId.trim()) {
+        throw new Error("openclaw_cron_remove requires jobId");
+      }
+      method = "cron.remove";
+      params = { id: args.jobId.trim() };
+      break;
+    case "openclaw_cron_run":
+      if (typeof args.jobId !== "string" || !args.jobId.trim()) {
+        throw new Error("openclaw_cron_run requires jobId");
+      }
+      method = "cron.run";
+      params = { id: args.jobId.trim(), mode: "force" };
+      break;
+    default:
+      throw new Error("Unsupported automation tool: " + mcpToolName);
+  }
+
+  const timeoutMs = method === "cron.run" ? "600000" : "30000";
+  const { stdout } = await execFileAsync(
+    process.execPath,
+    [
+      OPENCLAW_ENTRY,
+      "gateway",
+      "call",
+      method,
+      "--params",
+      JSON.stringify(params),
+      "--json",
+      "--timeout",
+      timeoutMs,
+    ],
+    {
+      env: {
+        ...process.env,
+        OPENCLAW_GATEWAY_TOKEN: GATEWAY_TOKEN,
+      },
+      maxBuffer: 16 * 1024 * 1024,
+    },
+  );
+
+  try {
+    return JSON.parse(stdout);
+  } catch {
+    throw new Error("OpenClaw automation RPC returned non-JSON output: " + stdout.slice(0, 500));
+  }
+}
 
 // Transport configuration
 const MCP_TRANSPORT = process.env.MCP_TRANSPORT || "stdio";
@@ -403,8 +473,13 @@ function createServer(): Server {
     const { name, arguments: args } = request.params;
 
     try {
-      const { tool, args: gatewayArgs } = mapToolCall(name, args as Record<string, unknown> || {});
-      const result = await invokeGatewayTool(tool, gatewayArgs);
+      const requestArgs = args as Record<string, unknown> || {};
+      const result = name.startsWith("openclaw_cron_")
+        ? await invokeAutomationRpc(name, requestArgs)
+        : await (async () => {
+            const { tool, args: gatewayArgs } = mapToolCall(name, requestArgs);
+            return await invokeGatewayTool(tool, gatewayArgs);
+          })();
 
       return {
         content: [

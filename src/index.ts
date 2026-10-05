@@ -23,6 +23,10 @@ async function invokeAutomationRpc(mcpToolName: string, args: Record<string, unk
   let params: Record<string, unknown>;
 
   switch (mcpToolName) {
+    case "openclaw_gateway_status":
+      method = "status";
+      params = {};
+      break;
     case "openclaw_cron_list":
       method = "cron.list";
       params = { includeDisabled: Boolean(args.includeDisabled) };
@@ -474,7 +478,7 @@ function createServer(): Server {
 
     try {
       const requestArgs = args as Record<string, unknown> || {};
-      const result = name.startsWith("openclaw_cron_")
+      const result = (name.startsWith("openclaw_cron_") || name === "openclaw_gateway_status")
         ? await invokeAutomationRpc(name, requestArgs)
         : await (async () => {
             const { tool, args: gatewayArgs } = mapToolCall(name, requestArgs);
